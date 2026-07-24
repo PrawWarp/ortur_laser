@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Install or update Ortur Engraver (venv, deps, .env, optional git pull / systemd).
 # Usage: ./scripts/install.sh
-# Env: BRANCH=main  SKIP_GIT=1  SKIP_DIALOUT=1  INSTALL_SERVICE=1  LAN=1
+# Env: BRANCH=main  SKIP_GIT=1  SKIP_DIALOUT=1  INSTALL_SERVICE=auto|1|0  LAN=1
 set -euo pipefail
 
 BRANCH="${BRANCH:-main}"
@@ -24,14 +24,30 @@ need_cmd() {
 need_cmd git
 need_cmd python3
 
+systemd_host() {
+  [[ -d /run/systemd/system ]] && command -v systemctl >/dev/null 2>&1
+}
+
+# Pi / systemd hosts: enable boot service by default. Set INSTALL_SERVICE=0 to skip.
+INSTALL_SERVICE="${INSTALL_SERVICE:-auto}"
+if [[ "$INSTALL_SERVICE" == "auto" ]]; then
+  if systemd_host; then
+    INSTALL_SERVICE=1
+  else
+    INSTALL_SERVICE=0
+  fi
+fi
+
 echo "==> Ortur Engraver install/update"
 echo "    $ROOT"
 
 if [[ "${SKIP_GIT:-0}" != "1" && -d "$ROOT/.git" ]]; then
-  echo "==> git pull ($BRANCH)"
+  echo "==> git sync ($BRANCH)"
   git -C "$ROOT" fetch --prune origin
   git -C "$ROOT" checkout "$BRANCH"
-  git -C "$ROOT" pull --ff-only origin "$BRANCH"
+  # Hard sync so dirty trees (common on Pi) still update; .env stays (gitignored).
+  git -C "$ROOT" reset --hard "origin/$BRANCH"
+  git -C "$ROOT" clean -fd
 fi
 
 if ! python3 -c "import venv" 2>/dev/null; then
@@ -62,19 +78,28 @@ if [[ "${SKIP_DIALOUT:-0}" != "1" ]]; then
   fi
 fi
 
-if [[ "${INSTALL_SERVICE:-0}" == "1" ]]; then
-  UNIT_SRC="$SCRIPT_DIR/ortur-engraver.service"
-  UNIT_DST="/etc/systemd/system/ortur-engraver.service"
-  echo "==> enabling boot service"
-  TMP="$(mktemp)"
-  sed -e "s|__USER__|$USER|g" -e "s|__ROOT__|$ROOT|g" "$UNIT_SRC" >"$TMP"
-  sudo cp "$TMP" "$UNIT_DST"
-  rm -f "$TMP"
-  sudo systemctl daemon-reload
-  sudo systemctl enable --now ortur-engraver.service
-  echo "    status: sudo systemctl status ortur-engraver"
+if [[ "$INSTALL_SERVICE" == "1" ]]; then
+  if ! systemd_host; then
+    echo "warning: systemd not available — skip boot service" >&2
+  elif ! command -v sudo >/dev/null 2>&1; then
+    echo "warning: sudo missing — skip boot service" >&2
+  else
+    UNIT_SRC="$SCRIPT_DIR/ortur-engraver.service"
+    UNIT_DST="/etc/systemd/system/ortur-engraver.service"
+    echo "==> enabling boot service (ortur-engraver)"
+    TMP="$(mktemp)"
+    sed -e "s|__USER__|$USER|g" -e "s|__ROOT__|$ROOT|g" "$UNIT_SRC" >"$TMP"
+    sudo cp "$TMP" "$UNIT_DST"
+    rm -f "$TMP"
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now ortur-engraver.service
+    echo "    status: sudo systemctl status ortur-engraver"
+    echo "    UI:     http://127.0.0.1:8000  (LAN if enabled in Settings)"
+  fi
 else
   echo ""
   echo "OK. Start with:  $ROOT/run.sh"
-  echo "Boot service:    INSTALL_SERVICE=1 $0"
+  if systemd_host; then
+    echo "Boot service:    INSTALL_SERVICE=1 $0"
+  fi
 fi

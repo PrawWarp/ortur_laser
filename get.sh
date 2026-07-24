@@ -58,6 +58,20 @@ SKIP_GIT=1 bash "$DIR/scripts/install.sh"
 if [[ "${NO_START:-0}" == "1" ]]; then
   echo ""
   echo "Installed. Start anytime with:  $DIR/run.sh"
+  if [[ -d /run/systemd/system ]]; then
+    echo "Or boot service:  INSTALL_SERVICE=1 $DIR/scripts/install.sh"
+  fi
+  exit 0
+fi
+
+# Prefer systemd unit when install enabled it (default on Pi).
+if command -v systemctl >/dev/null 2>&1 && systemctl cat ortur-engraver.service >/dev/null 2>&1; then
+  echo ""
+  echo "==> starting boot service (ortur-engraver)"
+  sudo systemctl restart ortur-engraver.service
+  echo "    http://127.0.0.1:8000"
+  echo "    status: sudo systemctl status ortur-engraver"
+  echo "    stop:   sudo systemctl stop ortur-engraver"
   exit 0
 fi
 

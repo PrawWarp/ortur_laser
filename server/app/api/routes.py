@@ -787,7 +787,13 @@ def _network_payload() -> dict[str, Any]:
 
 
 def _restart_with_run_py() -> None:
+    """Restart this app: prefer systemd unit on Pi, else spawn run.py."""
     time.sleep(0.4)
+    if _try_restart_systemd():
+        # Unit restart stops this process; if not, exit so only one server runs.
+        time.sleep(0.8)
+        os._exit(0)
+
     run_py = _SERVER_DIR / "run.py"
     kwargs: dict[str, Any] = {
         "cwd": str(_SERVER_DIR),
@@ -803,6 +809,91 @@ def _restart_with_run_py() -> None:
         kwargs["start_new_session"] = True
     subprocess.Popen([sys.executable, str(run_py)], **kwargs)
     os._exit(0)
+
+
+_SERVICE_UNIT = "ortur-engraver.service"
+
+
+def _systemd_host() -> bool:
+    return sys.platform != "win32" and Path("/run/systemd/system").is_dir()
+
+
+def _sudo_n(args: list[str], *, timeout: float = 60) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["sudo", "-n", *args],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        check=False,
+    )
+
+
+def _try_ensure_systemd_service() -> bool:
+    """Install/enable ortur-engraver via passwordless sudo when possible."""
+    if not _systemd_host():
+        return False
+    unit_src = _REPO_ROOT / "scripts" / "ortur-engraver.service"
+    if not unit_src.exists():
+        return False
+    try:
+        import getpass
+
+        user = getpass.getuser()
+    except Exception:
+        user = os.environ.get("USER") or "pi"
+    text = (
+        unit_src.read_text(encoding="utf-8")
+        .replace("__USER__", user)
+        .replace("__ROOT__", str(_REPO_ROOT))
+    )
+    tmp = _SERVER_DIR / ".ortur-engraver.service.tmp"
+    try:
+        tmp.write_text(text, encoding="utf-8")
+        for cmd in (
+            ["cp", str(tmp), f"/etc/systemd/system/{_SERVICE_UNIT}"],
+            ["systemctl", "daemon-reload"],
+            ["systemctl", "enable", "--now", _SERVICE_UNIT],
+        ):
+            proc = _sudo_n(cmd, timeout=90)
+            if proc.returncode != 0:
+                return False
+        return True
+    except Exception:
+        return False
+    finally:
+        try:
+            tmp.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+def _try_restart_systemd() -> bool:
+    if not _systemd_host():
+        return False
+    # Unit present?
+    cat = subprocess.run(
+        ["systemctl", "cat", _SERVICE_UNIT],
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+    if cat.returncode != 0:
+        # First update on a Pi that never enabled the service — try install.
+        if not _try_ensure_systemd_service():
+            return False
+    proc = _sudo_n(["systemctl", "restart", _SERVICE_UNIT], timeout=90)
+    if proc.returncode == 0:
+        return True
+    # Some units allow user restart without sudo when lingering; try plain.
+    plain = subprocess.run(
+        ["systemctl", "restart", _SERVICE_UNIT],
+        capture_output=True,
+        text=True,
+        timeout=90,
+        check=False,
+    )
+    return plain.returncode == 0
 
 
 def _refuse_if_job_running(action: str = "change settings") -> None:

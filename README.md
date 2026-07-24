@@ -34,7 +34,7 @@ Later updates / restarts:
 
 Or in the UI: **Settings → Updates → Check / Update & restart** (pulls GitHub `main`, keeps `.env`).
 
-Pi boot service + dialout notes: [docs/pi.md](docs/pi.md).
+Pi boot service (enabled by default on install/update): [docs/pi.md](docs/pi.md).
 
 In the UI: **Find** or **Auto — find laser** → **Connect**. Close LaserGRBL / LightBurn first.
 

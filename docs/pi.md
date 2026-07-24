@@ -24,9 +24,19 @@ curl -fsSL https://raw.githubusercontent.com/PrawWarp/ortur_laser/main/get.sh | 
 
 ## Boot on startup
 
+On Raspberry Pi / systemd hosts, `install.sh` and `get.sh` **enable and start** `ortur-engraver` by default (keeps running after logout).
+
+```bash
+sudo systemctl status ortur-engraver
+sudo systemctl restart ortur-engraver
+```
+
+Skip the service: `INSTALL_SERVICE=0 ~/ortur_laser/scripts/install.sh`
+
+One-shot enable if you installed earlier without it:
+
 ```bash
 INSTALL_SERVICE=1 ~/ortur_laser/scripts/install.sh
-sudo systemctl status ortur-engraver
 ```
 
 ## Serial (USB) access
