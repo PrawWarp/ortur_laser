@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ortur Engraver</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="top">
+    <h1>Ortur Engraver</h1>
+    <span class="sub">{{ bed_w }}×{{ bed_h }} mm</span>
+    <div class="top-conn">
+      <select id="port"></select>
+      <button id="btnConnect" type="button">Connect</button>
+      <button id="btnDisconnect" type="button" class="ghost">Disc.</button>
+    </div>
+    <div id="badge" class="badge disconnected">Disconnected</div>
+  </header>
+
+  <div id="alarmBanner" class="alarm-banner hidden">
+    Alarm / error 9 — click <strong>Unlock</strong>, then optionally <strong>Home</strong>.
+  </div>
+
+  <main class="grid">
+    <section class="panel machine">
+      <div class="block">
+        <h3 class="block-title">Status</h3>
+        <div class="stats stats-2">
+          <div><span>State</span><strong id="state">—</strong></div>
+          <div><span>MPos</span><strong id="mpos" class="mono">—</strong></div>
+        </div>
+        <p id="identity" class="mono muted ellip">—</p>
+        <p id="message" class="msg ellip">Ready</p>
+        <div class="btn-row tight">
+          <button type="button" data-act="unlock" class="need-conn">Unlock</button>
+          <button type="button" data-act="home" class="need-conn">Home</button>
+          <button type="button" data-act="reset" class="warn need-conn">Reset</button>
+          <button type="button" data-act="laser_off" class="laser-off need-conn">Laser Off</button>
+        </div>
+      </div>
+
+      <div class="block">
+        <h3 class="block-title">Motion</h3>
+        <div class="jog-block">
+          <div class="jog">
+            <button type="button" class="jog-btn need-conn" data-jog="Y" data-dir="1">Y+</button>
+            <button type="button" class="jog-btn need-conn" data-jog="X" data-dir="-1">X-</button>
+            <button type="button" class="jog-btn need-conn" data-jog="X" data-dir="1">X+</button>
+            <button type="button" class="jog-btn need-conn" data-jog="Y" data-dir="-1">Y-</button>
+          </div>
+          <div class="jog-side">
+            <span class="chip-label">Step mm</span>
+            <div class="chip-row" id="jogStepChips" role="group" aria-label="Jog step">
+              <button type="button" class="chip" data-step="1">1</button>
+              <button type="button" class="chip active" data-step="10">10</button>
+              <button type="button" class="chip" data-step="50">50</button>
+            </div>
+            <input type="hidden" id="jogStep" value="10" />
+            <button type="button" id="btnFrame" class="need-conn">Frame @ S0</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="block arm-panel" id="armPanel">
+        <div class="arm-panel-head">
+          <h3 class="block-title">Safety</h3>
+          <strong id="armStateLabel" class="arm-state disarmed">DISARMED</strong>
+        </div>
+        <p class="arm-panel-hint">Arming unlocks live laser output. Dry run never needs this.</p>
+        <div class="btn-row tight arm-actions">
+          <button type="button" id="btnArm" class="arm need-conn">ARM…</button>
+          <button type="button" id="btnDisarm" class="ghost need-conn">DISARM</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel preview">
+      <canvas id="bedPreview" width="520" height="559"></canvas>
+      <div class="preview-actions">
+        <p class="hint">Drag job · corner resize · arrows jog · Esc cancel</p>
+        <button type="button" id="btnClearTrail" class="ghost">Clear trail</button>
+      </div>
+    </section>
+
+    <section class="panel studio">
+      <div class="studio-scroll">
+        <nav class="studio-nav" role="tablist" aria-label="Job setup">
+          <button type="button" class="studio-nav-btn active" data-studio="source" style="--nav: var(--nav-source)">Source</button>
+          <button type="button" class="studio-nav-btn" data-studio="size" style="--nav: var(--nav-size)">Size</button>
+          <button type="button" class="studio-nav-btn" data-studio="material" style="--nav: var(--nav-material)">Material</button>
+          <button type="button" class="studio-nav-btn" data-studio="preview" style="--nav: var(--nav-preview)">Preview</button>
+          <button type="button" class="studio-nav-btn" data-studio="run" style="--nav: var(--nav-run)">Run</button>
+          <button type="button" class="studio-nav-btn" data-studio="misc" style="--nav: var(--nav-misc)">Misc</button>
+        </nav>
+
+        <div id="studio-source" class="studio-pane active" data-tone="source">
+          <div class="pane-head">
+            <span class="pane-kicker">1 · Source</span>
+            <span class="pane-desc">Image or text to engrave</span>
+          </div>
+          <div class="src-tabs">
+            <button type="button" class="src-tab active" data-tab="upload">Upload</button>
+            <button type="button" class="src-tab" data-tab="canvas">Canvas</button>
+          </div>
+          <div id="tab-upload" class="src-pane active">
+            <input type="file" id="file" accept="image/png,image/jpeg,image/jpg" />
+            <label class="preset-label">Image fit
+              <select id="imageFit">
+                <option value="fill" selected>Fill box (stretch)</option>
+                <option value="cover">Cover (crop)</option>
+                <option value="contain">Contain (letterbox)</option>
+              </select>
+            </label>
+            <label class="preset-label">Burn
+              <select id="burnPolarity">
+                <option value="auto" selected>Auto (detect)</option>
+                <option value="dark">Dark parts (black on light)</option>
+                <option value="light">Light parts (white on black)</option>
+              </select>
+            </label>
+            <button type="button" id="btnFitCanvas" class="ghost">Size canvas to image</button>
+          </div>
+          <div id="tab-canvas" class="src-pane">
+            <input type="text" id="canvasText" placeholder="Text" />
+            <select id="fontName"></select>
+          </div>
+        </div>
+
+        <div id="studio-size" class="studio-pane" data-tone="size">
+          <div class="pane-head">
+            <span class="pane-kicker">2 · Size &amp; position</span>
+            <span class="pane-desc">Job box on the bed (mm)</span>
+          </div>
+          <div class="form-grid">
+            <label>W <input type="number" id="width" value="40" min="1" step="1" /></label>
+            <label>H <input type="number" id="height" value="40" min="1" step="1" /></label>
+            <label>X <input type="number" id="ox" value="0" step="1" /></label>
+            <label>Y <input type="number" id="oy" value="0" step="1" /></label>
+          </div>
+          <label class="check-label">
+            <input type="checkbox" id="lockAspect" checked />
+            Lock proportions
+          </label>
+        </div>
+
+        <div id="studio-material" class="studio-pane" data-tone="material">
+          <div class="pane-head">
+            <span class="pane-kicker">3 · Material</span>
+            <span class="pane-desc">Power, feed, and burn style</span>
+          </div>
+          <label class="preset-label">Engrave
+            <select id="engraveMode">
+              <option value="fill" selected>Fill / solid ink</option>
+              <option value="outline">Outline only</option>
+            </select>
+          </label>
+          <label class="preset-label">Preset
+            <select id="preset"></select>
+          </label>
+          <div class="power-row">
+            <label class="power-label">Power <strong id="powerPctLabel">25%</strong>
+              <input type="range" id="powerPct" min="1" max="100" value="25" />
+            </label>
+            <label class="power-label">Feed <strong id="feedLabel">1000</strong> mm/min
+              <input type="range" id="feedRate" min="100" max="3000" step="50" value="1000" />
+            </label>
+          </div>
+          <label class="check-label">
+            <input type="checkbox" id="doublePass" />
+            Double pass (burn 2×)
+          </label>
+        </div>
+
+        <div id="studio-preview" class="studio-pane" data-tone="preview">
+          <div class="pane-head">
+            <span class="pane-kicker">4 · Preview</span>
+            <span class="pane-desc">How the bed canvas renders</span>
+          </div>
+          <label class="preset-label">Show
+            <select id="previewMode">
+              <option value="overlay" selected>Image + orange burn</option>
+              <option value="burn">Orange burn only</option>
+              <option value="image">Image only</option>
+            </select>
+          </label>
+          <p class="hint burn-hint">Orange = where G-code fires the laser.</p>
+        </div>
+
+        <div id="studio-run" class="studio-pane" data-tone="run">
+          <div class="pane-head">
+            <span class="pane-kicker">5 · Run</span>
+            <span class="pane-desc">Build G-code, then dry-run or send</span>
+          </div>
+
+          <div class="create-row">
+            <button type="button" id="btnCreate" class="primary">Create G-code</button>
+            <a id="btnDownload" class="button ghost disabled" href="#">.nc</a>
+          </div>
+
+          <div id="jobCard" class="job-card empty">
+            <div class="job-card-top">
+              <strong id="jobName">No job yet</strong>
+              <span id="jobArmChip" class="arm-chip disarmed">DISARMED</span>
+            </div>
+            <div id="jobMeta" class="job-meta muted">Create G-code to prepare a run</div>
+            <div id="jobStats" class="job-stats hidden">
+              <span id="jobLines">—</span>
+              <span id="jobEst">—</span>
+              <span id="jobPower">—</span>
+              <span id="jobFeed">—</span>
+            </div>
+          </div>
+
+          <div class="run-bar in-pane">
+            <div class="run-bar-meta">
+              <span id="runEst" class="run-pill muted">No est</span>
+              <span id="runArm" class="run-pill arm-chip disarmed">DISARMED</span>
+            </div>
+            <label class="check-label run-home">
+              <input type="checkbox" id="homeBeforeRun" checked />
+              Home first
+            </label>
+            <div class="btn-row run-row tight">
+              <button type="button" id="btnDry" class="primary" disabled title="Create a job first">Dry run</button>
+              <button type="button" id="btnSend" class="danger" disabled title="Create a job first">Send</button>
+              <button type="button" id="btnCancel" class="danger cancel" disabled>Cancel</button>
+            </div>
+            <p id="runHint" class="run-hint muted">Create a job first</p>
+            <div class="progress"><div id="progressBar"></div></div>
+            <p id="progressText" class="muted ellip">Idle</p>
+          </div>
+        </div>
+
+        <div id="studio-misc" class="studio-pane" data-tone="misc">
+          <div class="pane-head">
+            <span class="pane-kicker">Misc · Tools</span>
+            <span class="pane-desc">One-shot helpers (not part of the job wizard)</span>
+          </div>
+          <h3 class="misc-tool-title">Bed alignment grid</h3>
+          <p class="hint">Engrave lines matching the on-screen bed grid onto your wooden base. Dry-run first; use light power.</p>
+          <div class="form-grid">
+            <label>Minor mm <input type="number" id="gridMinor" value="50" min="5" step="5" /></label>
+            <label>Major mm <input type="number" id="gridMajor" value="100" min="10" step="10" /></label>
+          </div>
+          <div class="power-row">
+            <label class="power-label">Power <strong id="gridPowerPctLabel">30%</strong>
+              <input type="range" id="gridPowerPct" min="1" max="100" value="30" />
+            </label>
+            <label class="power-label">Feed <strong id="gridFeedLabel">900</strong> mm/min
+              <input type="range" id="gridFeedRate" min="100" max="3000" step="50" value="900" />
+            </label>
+          </div>
+          <label class="check-label">
+            <input type="checkbox" id="gridHomeFirst" />
+            Embed home ($H) in G-code
+          </label>
+          <label class="preset-label">Inset mm
+            <input type="number" id="gridInset" value="0" min="0" step="1" />
+          </label>
+          <button type="button" id="btnCreateGrid" class="primary">Create grid G-code</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    window.DEFAULT_PORT = {{ default_port|tojson }};
+    window.BED_W = {{ bed_w }};
+    window.BED_H = {{ bed_h }};
+  </script>
+  <script src="/static/app.js"></script>
+
+  <div id="appModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <div class="modal-backdrop" data-modal-dismiss></div>
+    <div class="modal-card">
+      <h2 id="modalTitle">Confirm</h2>
+      <div id="modalBody" class="modal-body"></div>
+      <div class="modal-actions">
+        <button type="button" id="modalCancel" class="ghost">Cancel</button>
+        <button type="button" id="modalOk">OK</button>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
