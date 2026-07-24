@@ -1211,6 +1211,8 @@ function renderUpdate(info) {
     cur.textContent = formatCommit(info.current);
     cur.classList.remove("ok", "warn", "muted");
   }
+  const ver = $("#updateVersion");
+  if (ver && info.version) ver.textContent = `v${info.version}`;
   if (lat) {
     lat.classList.remove("ok", "warn", "muted");
     if (info.error && !info.latest) {

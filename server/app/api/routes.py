@@ -18,7 +18,7 @@ from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
 from app import runtime
-from app.config import SETTINGS_DEFAULTS, _ENV, settings
+from app.config import APP_VERSION, SETTINGS_DEFAULTS, _ENV, settings
 from app.device import GrblSerial
 from app.gcode import (
     ENGRAVE_MODES,
@@ -1040,6 +1040,7 @@ def _update_payload(*, fetch: bool) -> dict[str, Any]:
         "repo_url": f"https://github.com/{_GITHUB_REPO}",
         "branch": _UPDATE_BRANCH,
         "root": str(_REPO_ROOT),
+        "version": APP_VERSION,
         "git": False,
         "current": None,
         "latest": None,

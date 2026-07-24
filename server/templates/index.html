@@ -12,7 +12,7 @@
 <body>
   <header class="top">
     <h1>Ortur Engraver</h1>
-    <span class="sub">{{ bed_w }}×{{ bed_h }} mm</span>
+    <span class="sub">{{ bed_w }}×{{ bed_h }} mm · v{{ app_version }}</span>
     <div class="top-conn">
       <select id="port" title="Serial port (Windows COM*, Linux /dev/ttyUSB*)"></select>
       <button id="btnFind" type="button" class="ghost" title="Scan ports for a GRBL/Ortur laser">Find</button>
@@ -288,7 +288,7 @@
           <p id="settingsStatus" class="hint muted">Loading…</p>
 
           <h3 class="misc-tool-title">Updates</h3>
-          <p class="hint">Checks GitHub <code>main</code> and can pull + reinstall deps (keeps <code>.env</code>). Works from this Pi/PC UI.</p>
+          <p class="hint">App <strong id="updateVersion">v{{ app_version }}</strong> — checks GitHub <code>main</code> and can pull + reinstall deps (keeps <code>.env</code>). Works from this Pi/PC UI.</p>
           <div id="updateCard" class="update-card">
             <div class="update-row">
               <span class="update-label">Current</span>
