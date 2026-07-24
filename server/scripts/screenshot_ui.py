@@ -1,4 +1,4 @@
-"""Capture UI screenshots for visual QA."""
+"""Capture UI screenshots for visual QA / README."""
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright
@@ -14,20 +14,35 @@ def main() -> None:
         page = browser.new_page(viewport={"width": 1440, "height": 900})
         page.goto(BASE, wait_until="networkidle")
         page.wait_for_timeout(800)
+        # Generic port label for public screenshots (avoid machine-specific USB names)
+        page.evaluate(
+            """() => {
+              const sel = document.getElementById('port');
+              if (!sel) return;
+              sel.innerHTML = '';
+              const o = document.createElement('option');
+              o.value = 'COM3';
+              o.textContent = 'COM3';
+              sel.appendChild(o);
+              sel.value = 'COM3';
+            }"""
+        )
         page.screenshot(path=str(OUT / "ui-idle.png"), full_page=False)
 
-        # Switch to canvas + type text so preview has content
-        page.click('button.tab[data-tab="canvas"]')
-        page.fill("#canvasText", "HENRY")
+        # Canvas source with generic demo text (no personal names)
+        page.click('button.src-tab[data-tab="canvas"]')
+        page.fill("#canvasText", "DEMO")
         page.wait_for_timeout(400)
         page.screenshot(path=str(OUT / "ui-canvas.png"), full_page=False)
 
-        # Create job — card + run bar should update
+        # Run pane owns Create G-code
+        page.click('button.studio-nav-btn[data-studio="run"]')
+        page.wait_for_timeout(200)
         page.click("#btnCreate")
         page.wait_for_timeout(1200)
         page.screenshot(path=str(OUT / "ui-job-ready.png"), full_page=False)
 
-        # Open arm modal (visual QA of custom checklist dialog)
+        # Arm modal (visual QA of custom checklist dialog)
         page.evaluate(
             """() => {
               openModal({

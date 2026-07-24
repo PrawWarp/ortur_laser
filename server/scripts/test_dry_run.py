@@ -9,7 +9,7 @@ print("UI", r.status_code)
 
 # connect
 ports = requests.get(f"{base}/api/device/ports").json()
-port = ports["ports"][0]["device"] if ports["ports"] else "COM6"
+port = ports["ports"][0]["device"] if ports["ports"] else "COM3"
 print("port", port)
 
 s = requests.get(f"{base}/api/device/status").json()

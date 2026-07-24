@@ -9,7 +9,7 @@ print("fonts", fonts[:5], "...", len(fonts))
 
 # reconnect
 ports = requests.get(f"{base}/api/device/ports").json()
-port = ports["ports"][0]["device"] if ports["ports"] else "COM6"
+port = ports["ports"][0]["device"] if ports["ports"] else "COM3"
 s = requests.post(f"{base}/api/device/connect", json={"port": port}).json()
 print("connected", s.get("connected"), (s.get("identity") or "")[:50], s)
 if not s.get("connected"):
@@ -21,7 +21,7 @@ requests.post(f"{base}/api/device/unlock", json={})
 r = requests.post(
     f"{base}/api/jobs/from-canvas",
     data={
-        "text": "Henry",
+        "text": "Demo",
         "font_name": "Arial",
         "width_mm": "30",
         "height_mm": "20",

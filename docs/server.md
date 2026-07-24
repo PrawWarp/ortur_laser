@@ -3,15 +3,17 @@
 ## Dev (Windows PC)
 
 ```powershell
-cd c:\code\ortur_laser\server
+cd server
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-copy .env.example .env   # set SERIAL_PORT=COM6
-uvicorn app.main:app --app-dir . --host 127.0.0.1 --port 8000 --reload
+copy .env.example .env   # set SERIAL_PORT to your COM port
+python run.py
 ```
 
 Open http://127.0.0.1:8000
+
+To reach the UI from a phone/tablet on the same Wi‑Fi: **Misc → Available on local network** (restarts the server), or set `LAN_ACCESS=true` in `.env` and run `python run.py` again.
 
 Close LaserGRBL / LightBurn first (exclusive serial port).
 

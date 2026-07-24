@@ -1,15 +1,22 @@
 from __future__ import annotations
 
+import os
+import re
+import socket
+import subprocess
+import sys
 import threading
 import time
 import uuid
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
-from app.config import settings
+from app import runtime
+from app.config import _ENV, settings
 from app.device import GrblSerial
 from app.gcode import (
     ENGRAVE_MODES,
@@ -33,6 +40,7 @@ router = APIRouter()
 device = GrblSerial(baud=settings.serial_baud)
 jobs: dict[str, dict[str, Any]] = {}
 _job_thread: threading.Thread | None = None
+_SERVER_DIR = Path(__file__).resolve().parents[2]
 
 
 def _job_timing(s) -> dict[str, float | None]:
@@ -565,3 +573,128 @@ def send_job_dry(job_id: str, body: DrySendBody | None = None):
     _job_thread.start()
     msg = "Dry-run started (homing first, laser off)" if home_first else "Dry-run started (laser forced off)"
     return {"ok": True, "message": msg, **_status_dict()}
+
+
+def _lan_ips() -> list[str]:
+    found: set[str] = set()
+    try:
+        hostname = socket.gethostname()
+        for info in socket.getaddrinfo(hostname, None, socket.AF_INET):
+            ip = info[4][0]
+            if ip and not ip.startswith("127.") and not ip.startswith("169.254."):
+                found.add(ip)
+    except OSError:
+        pass
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(0.3)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        if ip and not ip.startswith("127.") and not ip.startswith("169.254."):
+            found.add(ip)
+    except OSError:
+        pass
+
+    def score(ip: str) -> tuple[int, str]:
+        if ip.startswith("192.168."):
+            return (0, ip)
+        if ip.startswith("10."):
+            return (1, ip)
+        if ip.startswith("172."):
+            return (2, ip)
+        return (3, ip)
+
+    ordered = sorted(found, key=score)
+    # Prefer home/LAN ranges; hide Hyper-V/WSL 172.x when a better IP exists.
+    preferred = [ip for ip in ordered if ip.startswith(("192.168.", "10."))]
+    return preferred or ordered
+
+
+def _write_env_value(key: str, value: str) -> None:
+    path = _ENV
+    lines: list[str] = []
+    if path.exists():
+        lines = path.read_text(encoding="utf-8").splitlines()
+    pattern = re.compile(rf"^\s*{re.escape(key)}\s*=")
+    replaced = False
+    out: list[str] = []
+    for line in lines:
+        if pattern.match(line):
+            out.append(f"{key}={value}")
+            replaced = True
+        else:
+            out.append(line)
+    if not replaced:
+        if out and out[-1].strip():
+            out.append("")
+        out.append(f"{key}={value}")
+    path.write_text("\n".join(out) + "\n", encoding="utf-8")
+
+
+def _network_payload() -> dict[str, Any]:
+    bind = runtime.bind_host
+    port = runtime.port or settings.port
+    lan_on = bind in ("0.0.0.0", "::")
+    local_urls = [f"http://127.0.0.1:{port}"]
+    lan_urls = [f"http://{ip}:{port}" for ip in _lan_ips()] if lan_on else []
+    return {
+        "lan_access": settings.lan_access,
+        "active": lan_on,
+        "bind_host": bind,
+        "port": port,
+        "local_urls": local_urls,
+        "lan_urls": lan_urls,
+        "restart_required": bool(settings.lan_access) != lan_on,
+    }
+
+
+def _restart_with_run_py() -> None:
+    time.sleep(0.4)
+    run_py = _SERVER_DIR / "run.py"
+    kwargs: dict[str, Any] = {
+        "cwd": str(_SERVER_DIR),
+        "close_fds": True,
+    }
+    if sys.platform == "win32":
+        # New console so the restarted server stays visible after this process exits.
+        kwargs["creationflags"] = subprocess.CREATE_NEW_CONSOLE  # type: ignore[attr-defined]
+    else:
+        kwargs["stdout"] = subprocess.DEVNULL
+        kwargs["stderr"] = subprocess.DEVNULL
+        kwargs["stdin"] = subprocess.DEVNULL
+        kwargs["start_new_session"] = True
+    subprocess.Popen([sys.executable, str(run_py)], **kwargs)
+    os._exit(0)
+
+
+class NetworkBody(BaseModel):
+    lan_access: bool
+    restart: bool = True
+
+
+@router.get("/server/network")
+def get_network():
+    return _network_payload()
+
+
+@router.post("/server/network")
+def set_network(body: NetworkBody):
+    _write_env_value("LAN_ACCESS", "true" if body.lan_access else "false")
+    # Drop legacy HOST override so bind follows LAN_ACCESS
+    if _ENV.exists():
+        text = _ENV.read_text(encoding="utf-8")
+        if re.search(r"^\s*HOST\s*=", text, re.M):
+            lines = [
+                ln
+                for ln in text.splitlines()
+                if not re.match(r"^\s*HOST\s*=", ln)
+            ]
+            _ENV.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+    settings.lan_access = body.lan_access
+    payload = {**_network_payload(), "ok": True, "restarting": False}
+    if body.restart:
+        payload["restarting"] = True
+        payload["restart_required"] = False
+        threading.Thread(target=_restart_with_run_py, daemon=True).start()
+    return payload

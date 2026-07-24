@@ -240,6 +240,21 @@
             <span class="pane-kicker">Misc · Tools</span>
             <span class="pane-desc">One-shot helpers (not part of the job wizard)</span>
           </div>
+
+          <h3 class="misc-tool-title">Network</h3>
+          <p class="hint">Off = this PC only. On = phones/tablets on your Wi‑Fi can open the UI (and control the laser).</p>
+          <label class="switch-label" for="lanAccess">
+            <span class="switch">
+              <input type="checkbox" id="lanAccess" />
+              <span class="switch-track" aria-hidden="true"></span>
+            </span>
+            <span class="switch-text">
+              <strong>Available on local network</strong>
+              <span id="lanStatus" class="switch-sub">Loading…</span>
+            </span>
+          </label>
+          <div id="lanUrls" class="lan-urls hidden"></div>
+
           <h3 class="misc-tool-title">Bed alignment grid</h3>
           <p class="hint">Engrave lines matching the on-screen bed grid onto your wooden base. Dry-run first; use light power.</p>
           <div class="form-grid">

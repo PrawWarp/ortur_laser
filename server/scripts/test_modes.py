@@ -5,7 +5,7 @@ for mode in ("fill", "outline"):
     j = requests.post(
         f"{b}/api/jobs/from-canvas",
         data={
-            "text": "Henry",
+            "text": "Demo",
             "font_name": "Arial",
             "width_mm": "54",
             "height_mm": "34",

@@ -765,7 +765,7 @@ async function loadPorts() {
   }
   if (!data.ports.length) {
     const opt = document.createElement("option");
-    opt.value = window.DEFAULT_PORT || "COM6";
+    opt.value = window.DEFAULT_PORT || "COM3";
     opt.textContent = opt.value;
     sel.appendChild(opt);
   }
@@ -983,6 +983,119 @@ function syncGridLabels() {
 $("#gridPowerPct")?.addEventListener("input", syncGridLabels);
 $("#gridFeedRate")?.addEventListener("input", syncGridLabels);
 syncGridLabels();
+
+function renderNetwork(info) {
+  const toggle = $("#lanAccess");
+  const status = $("#lanStatus");
+  const urls = $("#lanUrls");
+  if (!toggle || !status || !urls) return;
+  toggle.checked = !!info.lan_access;
+  if (info.restarting) {
+    status.textContent = "Restarting server…";
+    return;
+  }
+  if (info.active) {
+    status.textContent = "Listening on all interfaces — LAN devices can connect.";
+  } else if (info.restart_required && info.lan_access) {
+    status.textContent = "Saved ON — restart server to apply (python run.py).";
+  } else if (info.restart_required && !info.lan_access) {
+    status.textContent = "Saved OFF — restart server to apply (python run.py).";
+  } else {
+    status.textContent = "Localhost only (127.0.0.1).";
+  }
+  const parts = [];
+  if (info.local_urls?.length) {
+    parts.push(`<div class="lan-label">This PC</div>`);
+    for (const u of info.local_urls) {
+      parts.push(`<a href="${u}">${u}</a>`);
+    }
+  }
+  if (info.lan_urls?.length) {
+    parts.push(`<div class="lan-label">Other devices on Wi‑Fi</div>`);
+    for (const u of info.lan_urls) {
+      parts.push(`<a href="${u}">${u}</a>`);
+    }
+  }
+  urls.innerHTML = parts.join("");
+  urls.classList.toggle("hidden", parts.length === 0);
+}
+
+async function loadNetwork() {
+  try {
+    renderNetwork(await api("/server/network"));
+  } catch (e) {
+    const status = $("#lanStatus");
+    if (status) status.textContent = "Could not load network status.";
+  }
+}
+
+async function waitForServer(timeoutMs = 20000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const r = await fetch("/api/server/network", { cache: "no-store" });
+      if (r.ok) return true;
+    } catch (_) { /* still down */ }
+    await new Promise((r) => setTimeout(r, 400));
+  }
+  return false;
+}
+
+$("#lanAccess")?.addEventListener("change", async (e) => {
+  const toggle = e.target;
+  const want = !!toggle.checked;
+  toggle.disabled = true;
+  try {
+    if (want) {
+      const ok = await askConfirm(
+        "Other devices on your Wi‑Fi will be able to open this UI and control the laser. Only enable on a trusted network.",
+        { title: "Enable LAN access", okText: "Enable & restart", danger: true },
+      );
+      if (!ok) {
+        toggle.checked = false;
+        return;
+      }
+    } else {
+      const ok = await askConfirm(
+        "Server will restart and bind to localhost only. Phones/tablets on Wi‑Fi will lose access.",
+        { title: "Disable LAN access", okText: "Disable & restart" },
+      );
+      if (!ok) {
+        toggle.checked = true;
+        return;
+      }
+    }
+    const status = $("#lanStatus");
+    if (status) status.textContent = "Restarting server…";
+    let data;
+    try {
+      data = await api("/server/network", {
+        method: "POST",
+        body: JSON.stringify({ lan_access: want, restart: true }),
+      });
+    } catch (_) {
+      // Server exits during restart — expected.
+      data = { lan_access: want, restarting: true, local_urls: [], lan_urls: [] };
+    }
+    renderNetwork({ ...data, restarting: true });
+    const up = await waitForServer();
+    if (up) {
+      location.reload();
+    } else {
+      if (status) {
+        status.textContent = "Restart timed out. Run: python run.py";
+      }
+      await loadNetwork();
+    }
+  } catch (err) {
+    showAlert(err.message || String(err), "Network");
+    toggle.checked = !want;
+  } finally {
+    toggle.disabled = false;
+  }
+});
+
+loadNetwork();
 
 $("#btnCreateGrid")?.addEventListener("click", async () => {
   const minor = Number($("#gridMinor")?.value || 50);
