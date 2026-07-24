@@ -11,8 +11,11 @@
 </head>
 <body>
   <header class="top">
-    <h1>Ortur Engraver</h1>
-    <span class="sub">{{ bed_w }}×{{ bed_h }} mm · v{{ app_version }}</span>
+    <div class="brand">
+      <h1>Ortur Engraver</h1>
+      <span class="ver" title="App version">v{{ app_version }}</span>
+      <span class="sub">{{ bed_w }}×{{ bed_h }} mm</span>
+    </div>
     <div class="top-conn">
       <select id="port" title="Serial port (Windows COM*, Linux /dev/ttyUSB*)"></select>
       <button id="btnFind" type="button" class="ghost" title="Scan ports for a GRBL/Ortur laser">Find</button>
@@ -23,7 +26,7 @@
   </header>
 
   <div id="alarmBanner" class="alarm-banner hidden">
-    Alarm / error 9 — click <strong>Unlock</strong>, then optionally <strong>Home</strong>.
+    Machine locked (Alarm / GRBL error 9) — click <strong>Unlock</strong>, then <strong>Home</strong> if position was lost.
   </div>
 
   <main class="grid">

@@ -6,7 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 _ENV = Path(__file__).resolve().parent.parent / ".env"
 
 # Bump when shipping user-visible changes (shown in the UI header).
-APP_VERSION = "0.2.0"
+APP_VERSION = "0.2.1"
 
 
 def _default_serial_hint() -> str:
