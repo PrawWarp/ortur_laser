@@ -95,6 +95,7 @@
           <button type="button" class="studio-nav-btn" data-studio="material" style="--nav: var(--nav-material)">Material</button>
           <button type="button" class="studio-nav-btn" data-studio="preview" style="--nav: var(--nav-preview)">Preview</button>
           <button type="button" class="studio-nav-btn" data-studio="run" style="--nav: var(--nav-run)">Run</button>
+          <button type="button" class="studio-nav-btn" data-studio="settings" style="--nav: var(--nav-settings)">Settings</button>
           <button type="button" class="studio-nav-btn" data-studio="misc" style="--nav: var(--nav-misc)">Misc</button>
         </nav>
 
@@ -234,6 +235,76 @@
             <div class="progress"><div id="progressBar"></div></div>
             <p id="progressText" class="muted ellip">Idle</p>
           </div>
+        </div>
+
+        <div id="studio-settings" class="studio-pane" data-tone="settings">
+          <div class="pane-head">
+            <span class="pane-kicker">Settings · .env</span>
+            <span class="pane-desc">Edit server/.env — save or reset restarts the app</span>
+          </div>
+
+          <h3 class="misc-tool-title">Serial</h3>
+          <div class="form-grid settings-grid">
+            <label class="span-2">Port
+              <input type="text" id="cfgSerialPort" placeholder="auto" autocomplete="off" spellcheck="false" />
+            </label>
+            <label>Baud
+              <input type="number" id="cfgSerialBaud" min="1200" max="921600" step="1" />
+            </label>
+          </div>
+          <p class="hint">Use <code>auto</code> to probe, or a fixed port like <code>COM3</code> / <code>/dev/ttyUSB0</code>.</p>
+
+          <h3 class="misc-tool-title">Bed</h3>
+          <div class="form-grid settings-grid">
+            <label>Width mm
+              <input type="number" id="cfgBedW" min="1" max="5000" step="1" />
+            </label>
+            <label>Height mm
+              <input type="number" id="cfgBedH" min="1" max="5000" step="1" />
+            </label>
+          </div>
+
+          <h3 class="misc-tool-title">Server</h3>
+          <div class="form-grid settings-grid">
+            <label>HTTP port
+              <input type="number" id="cfgHttpPort" min="1" max="65535" step="1" />
+            </label>
+          </div>
+          <label class="switch-label" for="cfgLanAccess">
+            <span class="switch">
+              <input type="checkbox" id="cfgLanAccess" />
+              <span class="switch-track" aria-hidden="true"></span>
+            </span>
+            <span class="switch-text">
+              <strong>Available on local network</strong>
+              <span class="switch-sub">Bind 0.0.0.0 so phones/tablets on Wi‑Fi can open the UI</span>
+            </span>
+          </label>
+
+          <div class="btn-row settings-actions">
+            <button type="button" id="btnSaveSettings" class="primary">Save &amp; restart</button>
+            <button type="button" id="btnResetSettings" class="ghost">Reset to defaults</button>
+          </div>
+          <p id="settingsStatus" class="hint muted">Loading…</p>
+
+          <h3 class="misc-tool-title">Updates</h3>
+          <p class="hint">Checks GitHub <code>main</code> and can pull + reinstall deps (keeps <code>.env</code>).</p>
+          <div id="updateCard" class="update-card">
+            <div class="update-row">
+              <span class="update-label">Current</span>
+              <span id="updateCurrent" class="update-value muted">Checking…</span>
+            </div>
+            <div class="update-row">
+              <span class="update-label">Latest</span>
+              <span id="updateLatest" class="update-value muted">—</span>
+            </div>
+            <div id="updateCommits" class="update-commits hidden"></div>
+          </div>
+          <div class="btn-row settings-actions">
+            <button type="button" id="btnCheckUpdate" class="ghost">Check for updates</button>
+            <button type="button" id="btnApplyUpdate" class="primary" disabled>Update &amp; restart</button>
+          </div>
+          <p id="updateStatus" class="hint muted"></p>
         </div>
 
         <div id="studio-misc" class="studio-pane" data-tone="misc">

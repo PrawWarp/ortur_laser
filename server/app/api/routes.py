@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import platform
 import re
@@ -12,12 +13,12 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
 from app import runtime
-from app.config import _ENV, settings
+from app.config import SETTINGS_DEFAULTS, _ENV, settings
 from app.device import GrblSerial
 from app.gcode import (
     ENGRAVE_MODES,
@@ -42,6 +43,9 @@ device = GrblSerial(baud=settings.serial_baud)
 jobs: dict[str, dict[str, Any]] = {}
 _job_thread: threading.Thread | None = None
 _SERVER_DIR = Path(__file__).resolve().parents[2]
+_REPO_ROOT = _SERVER_DIR.parent
+_UPDATE_BRANCH = "main"
+_GITHUB_REPO = "PrawWarp/ortur_laser"
 
 
 def _job_timing(s) -> dict[str, float | None]:
@@ -630,25 +634,139 @@ def _lan_ips() -> list[str]:
     return preferred or ordered
 
 
+_ENV_KEY_MAP: dict[str, str] = {
+    "serial_port": "SERIAL_PORT",
+    "serial_baud": "SERIAL_BAUD",
+    "bed_width_mm": "BED_WIDTH_MM",
+    "bed_height_mm": "BED_HEIGHT_MM",
+    "lan_access": "LAN_ACCESS",
+    "port": "PORT",
+}
+
+
 def _write_env_value(key: str, value: str) -> None:
+    _write_env_values({key: value})
+
+
+def _write_env_values(updates: dict[str, str]) -> None:
     path = _ENV
     lines: list[str] = []
     if path.exists():
         lines = path.read_text(encoding="utf-8").splitlines()
-    pattern = re.compile(rf"^\s*{re.escape(key)}\s*=")
-    replaced = False
+    # Drop legacy HOST override so bind follows LAN_ACCESS only.
+    lines = [ln for ln in lines if not re.match(r"^\s*HOST\s*=", ln)]
+    pending = dict(updates)
     out: list[str] = []
     for line in lines:
-        if pattern.match(line):
-            out.append(f"{key}={value}")
-            replaced = True
+        matched_key = None
+        for key in list(pending):
+            if re.match(rf"^\s*{re.escape(key)}\s*=", line):
+                matched_key = key
+                break
+        if matched_key is not None:
+            out.append(f"{matched_key}={pending.pop(matched_key)}")
         else:
             out.append(line)
-    if not replaced:
+    if pending:
         if out and out[-1].strip():
             out.append("")
-        out.append(f"{key}={value}")
+        for key, value in pending.items():
+            out.append(f"{key}={value}")
     path.write_text("\n".join(out) + "\n", encoding="utf-8")
+
+
+def _format_env_value(field: str, value: Any) -> str:
+    if field == "lan_access":
+        return "true" if bool(value) else "false"
+    if field in ("serial_baud", "port"):
+        return str(int(value))
+    if field in ("bed_width_mm", "bed_height_mm"):
+        n = float(value)
+        return str(int(n)) if n == int(n) else str(n)
+    return str(value).strip()
+
+
+def _settings_values() -> dict[str, Any]:
+    return {
+        "serial_port": (settings.serial_port or "auto").strip() or "auto",
+        "serial_baud": int(settings.serial_baud),
+        "bed_width_mm": float(settings.bed_width_mm),
+        "bed_height_mm": float(settings.bed_height_mm),
+        "lan_access": bool(settings.lan_access),
+        "port": int(settings.port),
+    }
+
+
+def _settings_payload() -> dict[str, Any]:
+    return {
+        "values": _settings_values(),
+        "defaults": dict(SETTINGS_DEFAULTS),
+        "env_file": str(_ENV),
+        "fields": [
+            {
+                "key": "serial_port",
+                "label": "Serial port",
+                "env": "SERIAL_PORT",
+                "hint": "auto, COM3, /dev/ttyUSB0, /dev/ttyACM0",
+            },
+            {
+                "key": "serial_baud",
+                "label": "Baud rate",
+                "env": "SERIAL_BAUD",
+                "hint": "Usually 115200 for GRBL",
+            },
+            {
+                "key": "bed_width_mm",
+                "label": "Bed width (mm)",
+                "env": "BED_WIDTH_MM",
+                "hint": "Work area width",
+            },
+            {
+                "key": "bed_height_mm",
+                "label": "Bed height (mm)",
+                "env": "BED_HEIGHT_MM",
+                "hint": "Work area height",
+            },
+            {
+                "key": "port",
+                "label": "HTTP port",
+                "env": "PORT",
+                "hint": "UI listen port (changing redirects after restart)",
+            },
+            {
+                "key": "lan_access",
+                "label": "LAN access",
+                "env": "LAN_ACCESS",
+                "hint": "Bind 0.0.0.0 so Wi‑Fi devices can open the UI",
+            },
+        ],
+    }
+
+
+def _apply_settings_values(
+    *,
+    serial_port: str,
+    serial_baud: int,
+    bed_width_mm: float,
+    bed_height_mm: float,
+    lan_access: bool,
+    port: int,
+) -> None:
+    env_updates = {
+        _ENV_KEY_MAP["serial_port"]: _format_env_value("serial_port", serial_port),
+        _ENV_KEY_MAP["serial_baud"]: _format_env_value("serial_baud", serial_baud),
+        _ENV_KEY_MAP["bed_width_mm"]: _format_env_value("bed_width_mm", bed_width_mm),
+        _ENV_KEY_MAP["bed_height_mm"]: _format_env_value("bed_height_mm", bed_height_mm),
+        _ENV_KEY_MAP["lan_access"]: _format_env_value("lan_access", lan_access),
+        _ENV_KEY_MAP["port"]: _format_env_value("port", port),
+    }
+    _write_env_values(env_updates)
+    settings.serial_port = serial_port
+    settings.serial_baud = serial_baud
+    settings.bed_width_mm = bed_width_mm
+    settings.bed_height_mm = bed_height_mm
+    settings.lan_access = lan_access
+    settings.port = port
 
 
 def _network_payload() -> dict[str, Any]:
@@ -687,8 +805,27 @@ def _restart_with_run_py() -> None:
     os._exit(0)
 
 
+def _refuse_if_job_running(action: str = "change settings") -> None:
+    if device.status.job_running:
+        raise HTTPException(400, f"Cannot {action} while a job is running")
+
+
 class NetworkBody(BaseModel):
     lan_access: bool
+    restart: bool = True
+
+
+class SettingsBody(BaseModel):
+    serial_port: str = Field(min_length=1, max_length=128)
+    serial_baud: int = Field(ge=1200, le=921600)
+    bed_width_mm: float = Field(gt=0, le=5000)
+    bed_height_mm: float = Field(gt=0, le=5000)
+    lan_access: bool
+    port: int = Field(ge=1, le=65535)
+    restart: bool = True
+
+
+class SettingsResetBody(BaseModel):
     restart: bool = True
 
 
@@ -699,21 +836,276 @@ def get_network():
 
 @router.post("/server/network")
 def set_network(body: NetworkBody):
+    _refuse_if_job_running()
     _write_env_value("LAN_ACCESS", "true" if body.lan_access else "false")
-    # Drop legacy HOST override so bind follows LAN_ACCESS
-    if _ENV.exists():
-        text = _ENV.read_text(encoding="utf-8")
-        if re.search(r"^\s*HOST\s*=", text, re.M):
-            lines = [
-                ln
-                for ln in text.splitlines()
-                if not re.match(r"^\s*HOST\s*=", ln)
-            ]
-            _ENV.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
     settings.lan_access = body.lan_access
     payload = {**_network_payload(), "ok": True, "restarting": False}
     if body.restart:
         payload["restarting"] = True
         payload["restart_required"] = False
+        threading.Thread(target=_restart_with_run_py, daemon=True).start()
+    return payload
+
+
+@router.get("/server/settings")
+def get_settings():
+    return _settings_payload()
+
+
+@router.put("/server/settings")
+def put_settings(body: SettingsBody):
+    _refuse_if_job_running()
+    serial_port = (body.serial_port or "auto").strip() or "auto"
+    _apply_settings_values(
+        serial_port=serial_port,
+        serial_baud=int(body.serial_baud),
+        bed_width_mm=float(body.bed_width_mm),
+        bed_height_mm=float(body.bed_height_mm),
+        lan_access=bool(body.lan_access),
+        port=int(body.port),
+    )
+    payload = {**_settings_payload(), "ok": True, "restarting": False}
+    if body.restart:
+        payload["restarting"] = True
+        threading.Thread(target=_restart_with_run_py, daemon=True).start()
+    return payload
+
+
+@router.post("/server/settings/reset")
+def reset_settings(body: SettingsResetBody | None = None):
+    _refuse_if_job_running()
+    restart = True if body is None else bool(body.restart)
+    d = SETTINGS_DEFAULTS
+    _apply_settings_values(
+        serial_port=str(d["serial_port"]),
+        serial_baud=int(d["serial_baud"]),
+        bed_width_mm=float(d["bed_width_mm"]),
+        bed_height_mm=float(d["bed_height_mm"]),
+        lan_access=bool(d["lan_access"]),
+        port=int(d["port"]),
+    )
+    payload = {**_settings_payload(), "ok": True, "restarting": False, "reset": True}
+    if restart:
+        payload["restarting"] = True
+        threading.Thread(target=_restart_with_run_py, daemon=True).start()
+    return payload
+
+
+def _git(*args: str, timeout: float = 60) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", "-C", str(_REPO_ROOT), *args],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        check=False,
+    )
+
+
+def _git_ok(proc: subprocess.CompletedProcess[str]) -> bool:
+    return proc.returncode == 0
+
+
+def _git_commit_info(ref: str) -> dict[str, str] | None:
+    fmt = "%H%x1f%h%x1f%ci%x1f%s"
+    proc = _git("log", "-1", f"--format={fmt}", ref, timeout=15)
+    if not _git_ok(proc) or not proc.stdout.strip():
+        return None
+    parts = proc.stdout.strip().split("\x1f", 3)
+    if len(parts) < 4:
+        return None
+    return {
+        "sha": parts[0],
+        "short": parts[1],
+        "date": parts[2],
+        "subject": parts[3],
+    }
+
+
+def _git_is_repo() -> bool:
+    return (_REPO_ROOT / ".git").exists() and _git_ok(_git("rev-parse", "--is-inside-work-tree", timeout=10))
+
+
+def _git_dirty() -> bool:
+    proc = _git("status", "--porcelain", timeout=15)
+    return _git_ok(proc) and bool(proc.stdout.strip())
+
+
+def _git_remote_url() -> str:
+    proc = _git("remote", "get-url", "origin", timeout=10)
+    if _git_ok(proc) and proc.stdout.strip():
+        return proc.stdout.strip()
+    return f"https://github.com/{_GITHUB_REPO}.git"
+
+
+def _update_payload(*, fetch: bool) -> dict[str, Any]:
+    base: dict[str, Any] = {
+        "repo": _GITHUB_REPO,
+        "repo_url": f"https://github.com/{_GITHUB_REPO}",
+        "branch": _UPDATE_BRANCH,
+        "root": str(_REPO_ROOT),
+        "git": False,
+        "current": None,
+        "latest": None,
+        "update_available": False,
+        "commits_behind": 0,
+        "commits": [],
+        "dirty": False,
+        "fetched": False,
+        "error": None,
+    }
+    if not _git_is_repo():
+        base["error"] = "Not a git checkout — reinstall with get.ps1 / get.sh to enable updates."
+        return base
+
+    base["git"] = True
+    base["remote_url"] = _git_remote_url()
+    base["dirty"] = _git_dirty()
+    current = _git_commit_info("HEAD")
+    base["current"] = current
+
+    if fetch:
+        fetch_proc = _git("fetch", "--prune", "origin", timeout=90)
+        if not _git_ok(fetch_proc):
+            err = (fetch_proc.stderr or fetch_proc.stdout or "git fetch failed").strip()
+            base["error"] = err[-400:]
+            # Still report local vs last-known origin/main if present.
+        else:
+            base["fetched"] = True
+
+    remote_ref = f"origin/{_UPDATE_BRANCH}"
+    latest = _git_commit_info(remote_ref)
+    if latest is None:
+        # Fallback: query GitHub without requiring a successful fetch.
+        latest = _github_latest_commit()
+        if latest:
+            base["latest"] = latest
+            if current and latest["sha"] != current["sha"]:
+                base["update_available"] = True
+                base["commits_behind"] = 1
+            if base["error"] is None and not base["fetched"]:
+                base["error"] = None
+        elif base["error"] is None:
+            base["error"] = f"Could not resolve {remote_ref}. Check network / git remote."
+        return base
+
+    base["latest"] = latest
+    if current and latest["sha"] != current["sha"]:
+        count_proc = _git("rev-list", "--count", f"HEAD..{remote_ref}", timeout=15)
+        behind = int(count_proc.stdout.strip() or "0") if _git_ok(count_proc) else 1
+        base["commits_behind"] = max(behind, 1)
+        base["update_available"] = behind > 0
+        log_proc = _git(
+            "log",
+            "--oneline",
+            "--no-decorate",
+            "-8",
+            f"HEAD..{remote_ref}",
+            timeout=15,
+        )
+        if _git_ok(log_proc) and log_proc.stdout.strip():
+            base["commits"] = [ln.strip() for ln in log_proc.stdout.splitlines() if ln.strip()]
+    return base
+
+
+def _github_latest_commit() -> dict[str, str] | None:
+    """Fallback when local origin/main is missing — public GitHub API."""
+    try:
+        import urllib.error
+        import urllib.request
+
+        url = f"https://api.github.com/repos/{_GITHUB_REPO}/commits/{_UPDATE_BRANCH}"
+        req = urllib.request.Request(
+            url,
+            headers={
+                "Accept": "application/vnd.github+json",
+                "User-Agent": "ortur-engraver-update-check",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        commit = data.get("commit") or {}
+        return {
+            "sha": data.get("sha") or "",
+            "short": (data.get("sha") or "")[:7],
+            "date": ((commit.get("committer") or {}).get("date")) or "",
+            "subject": (commit.get("message") or "").split("\n", 1)[0],
+        }
+    except Exception:
+        return None
+
+
+def _pip_install_requirements() -> None:
+    req = _SERVER_DIR / "requirements.txt"
+    if not req.exists():
+        raise HTTPException(500, "Missing server/requirements.txt")
+    proc = subprocess.run(
+        [sys.executable, "-m", "pip", "install", "-q", "-r", str(req)],
+        capture_output=True,
+        text=True,
+        timeout=300,
+        check=False,
+    )
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or "pip failed").strip()
+        raise HTTPException(500, f"pip install failed: {err[-500:]}")
+
+
+class UpdateBody(BaseModel):
+    restart: bool = True
+
+
+@router.get("/server/update")
+def get_update(fetch: bool = Query(True)):
+    try:
+        return _update_payload(fetch=fetch)
+    except subprocess.TimeoutExpired:
+        raise HTTPException(504, "Timed out contacting GitHub / git remote") from None
+    except FileNotFoundError:
+        raise HTTPException(500, "git is not installed or not on PATH") from None
+
+
+@router.post("/server/update")
+def apply_update(body: UpdateBody | None = None):
+    _refuse_if_job_running("update")
+    restart = True if body is None else bool(body.restart)
+    if not _git_is_repo():
+        raise HTTPException(400, "Not a git checkout — cannot update from GitHub")
+    if _git_dirty():
+        raise HTTPException(
+            400,
+            "Working tree has local changes. Commit/stash them, or update manually via scripts/install.",
+        )
+
+    try:
+        fetch_proc = _git("fetch", "--prune", "origin", timeout=90)
+        if not _git_ok(fetch_proc):
+            err = (fetch_proc.stderr or fetch_proc.stdout or "git fetch failed").strip()
+            raise HTTPException(502, f"git fetch failed: {err[-400:]}")
+
+        remote_ref = f"origin/{_UPDATE_BRANCH}"
+        if _git_commit_info(remote_ref) is None:
+            raise HTTPException(502, f"Missing {remote_ref} after fetch")
+
+        checkout = _git("checkout", _UPDATE_BRANCH, timeout=30)
+        if not _git_ok(checkout):
+            err = (checkout.stderr or checkout.stdout or "checkout failed").strip()
+            raise HTTPException(500, f"git checkout failed: {err[-400:]}")
+
+        pull = _git("pull", "--ff-only", "origin", _UPDATE_BRANCH, timeout=90)
+        if not _git_ok(pull):
+            err = (pull.stderr or pull.stdout or "pull failed").strip()
+            raise HTTPException(500, f"git pull failed: {err[-400:]}")
+
+        _pip_install_requirements()
+    except HTTPException:
+        raise
+    except subprocess.TimeoutExpired:
+        raise HTTPException(504, "Update timed out during git/pip") from None
+    except FileNotFoundError:
+        raise HTTPException(500, "git is not installed or not on PATH") from None
+
+    payload = {**_update_payload(fetch=False), "ok": True, "updated": True, "restarting": False}
+    if restart:
+        payload["restarting"] = True
         threading.Thread(target=_restart_with_run_py, daemon=True).start()
     return payload

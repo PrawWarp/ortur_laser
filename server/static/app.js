@@ -1102,17 +1102,315 @@ async function loadNetwork() {
   }
 }
 
-async function waitForServer(timeoutMs = 20000) {
+async function waitForServer(timeoutMs = 20000, origin = "") {
   const start = Date.now();
+  const base = origin || "";
   while (Date.now() - start < timeoutMs) {
     try {
-      const r = await fetch("/api/server/network", { cache: "no-store" });
+      const r = await fetch(`${base}/api/server/network`, { cache: "no-store" });
       if (r.ok) return true;
     } catch (_) { /* still down */ }
     await new Promise((r) => setTimeout(r, 400));
   }
   return false;
 }
+
+function currentBrowserPort() {
+  if (location.port) return Number(location.port);
+  return location.protocol === "https:" ? 443 : 80;
+}
+
+function originForPort(port) {
+  return `${location.protocol}//${location.hostname}:${port}`;
+}
+
+async function reloadAfterRestart(nextPort) {
+  const port = Number(nextPort);
+  const samePort = !Number.isFinite(port) || port === currentBrowserPort();
+  const origin = samePort ? "" : originForPort(port);
+  const up = await waitForServer(25000, origin);
+  if (up) {
+    if (samePort) location.reload();
+    else location.href = `${origin}/`;
+    return true;
+  }
+  return false;
+}
+
+function fillSettingsForm(values) {
+  const v = values || {};
+  const portEl = $("#cfgSerialPort");
+  const baudEl = $("#cfgSerialBaud");
+  const bedW = $("#cfgBedW");
+  const bedH = $("#cfgBedH");
+  const httpPort = $("#cfgHttpPort");
+  const lan = $("#cfgLanAccess");
+  if (portEl) portEl.value = v.serial_port ?? "auto";
+  if (baudEl) baudEl.value = v.serial_baud ?? 115200;
+  if (bedW) bedW.value = v.bed_width_mm ?? 400;
+  if (bedH) bedH.value = v.bed_height_mm ?? 430;
+  if (httpPort) httpPort.value = v.port ?? 8000;
+  if (lan) lan.checked = !!v.lan_access;
+}
+
+function readSettingsForm() {
+  return {
+    serial_port: ($("#cfgSerialPort")?.value || "auto").trim() || "auto",
+    serial_baud: Number($("#cfgSerialBaud")?.value || 115200),
+    bed_width_mm: Number($("#cfgBedW")?.value || 400),
+    bed_height_mm: Number($("#cfgBedH")?.value || 430),
+    port: Number($("#cfgHttpPort")?.value || 8000),
+    lan_access: !!$("#cfgLanAccess")?.checked,
+    restart: true,
+  };
+}
+
+function setSettingsStatus(text) {
+  const el = $("#settingsStatus");
+  if (el) el.textContent = text;
+}
+
+async function loadSettings() {
+  try {
+    const data = await api("/server/settings");
+    fillSettingsForm(data.values);
+    setSettingsStatus("Loaded from server/.env");
+  } catch (e) {
+    setSettingsStatus("Could not load settings.");
+  }
+}
+
+function setUpdateStatus(text) {
+  const el = $("#updateStatus");
+  if (el) el.textContent = text || "";
+}
+
+function formatCommit(info) {
+  if (!info) return "—";
+  const short = info.short || (info.sha || "").slice(0, 7) || "?";
+  const subject = (info.subject || "").trim();
+  return subject ? `${short} · ${subject}` : short;
+}
+
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function renderUpdate(info) {
+  const cur = $("#updateCurrent");
+  const lat = $("#updateLatest");
+  const commits = $("#updateCommits");
+  const applyBtn = $("#btnApplyUpdate");
+  if (!info) return;
+
+  if (cur) {
+    cur.textContent = formatCommit(info.current);
+    cur.classList.remove("ok", "warn", "muted");
+  }
+  if (lat) {
+    lat.classList.remove("ok", "warn", "muted");
+    if (info.error && !info.latest) {
+      lat.textContent = info.error;
+      lat.classList.add("warn");
+    } else if (info.update_available) {
+      const n = info.commits_behind || 1;
+      lat.textContent = `${formatCommit(info.latest)} (${n} behind)`;
+      lat.classList.add("warn");
+    } else if (info.latest) {
+      lat.textContent = `${formatCommit(info.latest)} · up to date`;
+      lat.classList.add("ok");
+    } else {
+      lat.textContent = "—";
+      lat.classList.add("muted");
+    }
+  }
+  if (commits) {
+    const lines = info.commits || [];
+    if (lines.length) {
+      commits.innerHTML = lines.map((ln) => `<div>${escapeHtml(ln)}</div>`).join("");
+      commits.classList.remove("hidden");
+    } else {
+      commits.innerHTML = "";
+      commits.classList.add("hidden");
+    }
+  }
+  if (applyBtn) {
+    applyBtn.disabled = !info.update_available || !!info.dirty || !info.git;
+  }
+  if (info.dirty) {
+    setUpdateStatus("Local changes detected — update blocked until the tree is clean.");
+  } else if (info.update_available) {
+    setUpdateStatus("Update available from GitHub.");
+  } else if (info.error) {
+    setUpdateStatus(info.error);
+  } else if (info.git) {
+    setUpdateStatus("You're on the latest main.");
+  } else {
+    setUpdateStatus(info.error || "Updates unavailable.");
+  }
+}
+
+async function checkUpdate({ fetch = true, quiet = false } = {}) {
+  const checkBtn = $("#btnCheckUpdate");
+  const applyBtn = $("#btnApplyUpdate");
+  if (!quiet) setUpdateStatus(fetch ? "Checking GitHub…" : "Loading…");
+  if (checkBtn) checkBtn.disabled = true;
+  if (applyBtn) applyBtn.disabled = true;
+  try {
+    const q = fetch ? "?fetch=1" : "?fetch=0";
+    const data = await api(`/server/update${q}`);
+    renderUpdate(data);
+    return data;
+  } catch (e) {
+    setUpdateStatus(e.message || String(e));
+    const lat = $("#updateLatest");
+    if (lat) {
+      lat.textContent = "Check failed";
+      lat.classList.remove("ok", "muted");
+      lat.classList.add("warn");
+    }
+    return null;
+  } finally {
+    if (checkBtn) checkBtn.disabled = false;
+  }
+}
+
+$("#btnCheckUpdate")?.addEventListener("click", () => {
+  checkUpdate({ fetch: true });
+});
+
+$("#btnApplyUpdate")?.addEventListener("click", async () => {
+  const ok = await askConfirm(
+    "Pull latest from GitHub (main), reinstall Python deps, and restart. Your .env is kept.",
+    { title: "Update from GitHub", okText: "Update & restart" },
+  );
+  if (!ok) return;
+  const checkBtn = $("#btnCheckUpdate");
+  const applyBtn = $("#btnApplyUpdate");
+  if (checkBtn) checkBtn.disabled = true;
+  if (applyBtn) applyBtn.disabled = true;
+  setUpdateStatus("Updating from GitHub… (may take a minute)");
+  try {
+    let data;
+    try {
+      data = await api("/server/update", {
+        method: "POST",
+        body: JSON.stringify({ restart: true }),
+      });
+    } catch (_) {
+      data = { restarting: true };
+    }
+    if (data && data.ok === false) {
+      throw new Error(data.error || "Update failed");
+    }
+    setUpdateStatus("Restarting server…");
+    const nextPort = readSettingsForm().port;
+    const up = await reloadAfterRestart(nextPort);
+    if (!up) {
+      setUpdateStatus("Restart timed out. Run: python run.py");
+      await checkUpdate({ fetch: false, quiet: true });
+    }
+  } catch (err) {
+    showAlert(err.message || String(err), "Update");
+    setUpdateStatus(err.message || "Update failed.");
+    await checkUpdate({ fetch: false, quiet: true });
+  } finally {
+    if (checkBtn) checkBtn.disabled = false;
+  }
+});
+
+loadSettings();
+checkUpdate({ fetch: true, quiet: true });
+
+async function applySettingsRestart(request) {
+  setSettingsStatus("Restarting server…");
+  let data;
+  try {
+    data = await request();
+  } catch (_) {
+    // Server exits during restart — expected.
+    data = { values: readSettingsForm(), restarting: true };
+  }
+  if (data?.values) fillSettingsForm(data.values);
+  const nextPort = data?.values?.port ?? readSettingsForm().port;
+  const up = await reloadAfterRestart(nextPort);
+  if (!up) {
+    setSettingsStatus(
+      `Restart timed out. Open http://${location.hostname}:${nextPort}/ or run: python run.py`,
+    );
+    await loadSettings();
+  }
+}
+
+$("#btnSaveSettings")?.addEventListener("click", async () => {
+  const body = readSettingsForm();
+  if (!Number.isFinite(body.serial_baud) || body.serial_baud < 1200) {
+    showAlert("Baud rate must be a number ≥ 1200.", "Settings");
+    return;
+  }
+  if (!Number.isFinite(body.bed_width_mm) || body.bed_width_mm <= 0) {
+    showAlert("Bed width must be greater than 0.", "Settings");
+    return;
+  }
+  if (!Number.isFinite(body.bed_height_mm) || body.bed_height_mm <= 0) {
+    showAlert("Bed height must be greater than 0.", "Settings");
+    return;
+  }
+  if (!Number.isFinite(body.port) || body.port < 1 || body.port > 65535) {
+    showAlert("HTTP port must be between 1 and 65535.", "Settings");
+    return;
+  }
+  const ok = await askConfirm(
+    "Writes server/.env and restarts the app so bed size, baud, port, and LAN bind take effect.",
+    { title: "Save settings", okText: "Save & restart" },
+  );
+  if (!ok) return;
+  const btn = $("#btnSaveSettings");
+  const resetBtn = $("#btnResetSettings");
+  if (btn) btn.disabled = true;
+  if (resetBtn) resetBtn.disabled = true;
+  try {
+    await applySettingsRestart(() =>
+      api("/server/settings", { method: "PUT", body: JSON.stringify(body) }),
+    );
+  } catch (err) {
+    showAlert(err.message || String(err), "Settings");
+    setSettingsStatus("Save failed.");
+  } finally {
+    if (btn) btn.disabled = false;
+    if (resetBtn) resetBtn.disabled = false;
+  }
+});
+
+$("#btnResetSettings")?.addEventListener("click", async () => {
+  const ok = await askConfirm(
+    "Restore factory defaults (auto serial, 115200 baud, 400×430 bed, port 8000, LAN off) and restart.",
+    { title: "Reset settings", okText: "Reset & restart", danger: true },
+  );
+  if (!ok) return;
+  const btn = $("#btnSaveSettings");
+  const resetBtn = $("#btnResetSettings");
+  if (btn) btn.disabled = true;
+  if (resetBtn) resetBtn.disabled = true;
+  try {
+    await applySettingsRestart(() =>
+      api("/server/settings/reset", {
+        method: "POST",
+        body: JSON.stringify({ restart: true }),
+      }),
+    );
+  } catch (err) {
+    showAlert(err.message || String(err), "Settings");
+    setSettingsStatus("Reset failed.");
+  } finally {
+    if (btn) btn.disabled = false;
+    if (resetBtn) resetBtn.disabled = false;
+  }
+});
 
 $("#lanAccess")?.addEventListener("change", async (e) => {
   const toggle = e.target;

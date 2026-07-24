@@ -32,11 +32,13 @@ Later updates / restarts:
 | Just run | `~\ortur_laser\run.ps1` | `~/ortur_laser/run.sh` |
 | Just update | `~\ortur_laser\scripts\install.ps1` | `~/ortur_laser/scripts/install.sh` |
 
+Or in the UI: **Settings → Updates → Check / Update & restart** (pulls GitHub `main`, keeps `.env`).
+
 Pi boot service + dialout notes: [docs/pi.md](docs/pi.md).
 
 In the UI: **Find** or **Auto — find laser** → **Connect**. Close LaserGRBL / LightBurn first.
 
-LAN access: **Misc → Available on local network**, or set `LAN_ACCESS=true` in `server/.env` (configured on first-time setup; updates never overwrite `.env`).
+LAN access: **Settings** or **Misc → Available on local network**, or set `LAN_ACCESS=true` in `server/.env` (configured on first-time setup; updates never overwrite `.env`).
 
 ## Features
 
@@ -68,6 +70,8 @@ Dry run never requires arming. Live send does.
 ## Configuration
 
 First install runs a short setup and writes `server/.env`. **Updates never overwrite it.**
+
+In the UI: **Settings** edits the same variables (Save & restart / Reset to defaults).
 
 Re-run setup:
 

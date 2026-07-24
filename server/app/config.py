@@ -40,3 +40,13 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+# Canonical defaults for UI reset (matches field defaults above / .env.example).
+SETTINGS_DEFAULTS: dict[str, str | int | float | bool] = {
+    "serial_port": "auto",
+    "serial_baud": 115200,
+    "bed_width_mm": 400.0,
+    "bed_height_mm": 430.0,
+    "lan_access": False,
+    "port": 8000,
+}

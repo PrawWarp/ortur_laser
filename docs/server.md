@@ -19,7 +19,7 @@ Later: `~\ortur_laser\run.ps1`
 
 In the UI: **Find** probes USB serial ports for GRBL/Ortur, or leave **Auto — find laser** and hit **Connect**.
 
-To reach the UI from a phone/tablet on the same Wi‑Fi: **Misc → Available on local network** (restarts the server), or set `LAN_ACCESS=true` in `.env`.
+To reach the UI from a phone/tablet on the same Wi‑Fi: **Settings** or **Misc → Available on local network** (restarts the server), or set `LAN_ACCESS=true` in `.env`.
 
 Close LaserGRBL / LightBurn first (exclusive serial port).
 
