@@ -1239,10 +1239,15 @@ function renderUpdate(info) {
     }
   }
   if (applyBtn) {
-    applyBtn.disabled = !info.update_available || !!info.dirty || !info.git;
+    applyBtn.disabled = !info.update_available || !info.git;
   }
   if (info.dirty) {
-    setUpdateStatus("Local changes detected — update blocked until the tree is clean.");
+    const files = (info.dirty_files || []).slice(0, 6).join(", ");
+    setUpdateStatus(
+      files
+        ? `Local changes will be discarded on update (keeps .env): ${files}`
+        : "Local changes will be discarded on update (keeps .env).",
+    );
   } else if (info.update_available) {
     setUpdateStatus("Update available from GitHub.");
   } else if (info.error) {
@@ -1285,7 +1290,7 @@ $("#btnCheckUpdate")?.addEventListener("click", () => {
 
 $("#btnApplyUpdate")?.addEventListener("click", async () => {
   const ok = await askConfirm(
-    "Pull latest from GitHub (main), reinstall Python deps, and restart. Your .env is kept.",
+    "Sync to GitHub main, reinstall Python deps, and restart. Local code changes are discarded; your .env is kept.",
     { title: "Update from GitHub", okText: "Update & restart" },
   );
   if (!ok) return;

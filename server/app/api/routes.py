@@ -925,9 +925,15 @@ def _git_is_repo() -> bool:
     return (_REPO_ROOT / ".git").exists() and _git_ok(_git("rev-parse", "--is-inside-work-tree", timeout=10))
 
 
-def _git_dirty() -> bool:
+def _git_dirty_files() -> list[str]:
     proc = _git("status", "--porcelain", timeout=15)
-    return _git_ok(proc) and bool(proc.stdout.strip())
+    if not _git_ok(proc) or not proc.stdout.strip():
+        return []
+    return [ln.strip() for ln in proc.stdout.splitlines() if ln.strip()]
+
+
+def _git_dirty() -> bool:
+    return bool(_git_dirty_files())
 
 
 def _git_remote_url() -> str:
@@ -950,6 +956,7 @@ def _update_payload(*, fetch: bool) -> dict[str, Any]:
         "commits_behind": 0,
         "commits": [],
         "dirty": False,
+        "dirty_files": [],
         "fetched": False,
         "error": None,
     }
@@ -959,7 +966,9 @@ def _update_payload(*, fetch: bool) -> dict[str, Any]:
 
     base["git"] = True
     base["remote_url"] = _git_remote_url()
-    base["dirty"] = _git_dirty()
+    dirty_files = _git_dirty_files()
+    base["dirty"] = bool(dirty_files)
+    base["dirty_files"] = dirty_files[:20]
     current = _git_commit_info("HEAD")
     base["current"] = current
 
@@ -1070,11 +1079,6 @@ def apply_update(body: UpdateBody | None = None):
     restart = True if body is None else bool(body.restart)
     if not _git_is_repo():
         raise HTTPException(400, "Not a git checkout — cannot update from GitHub")
-    if _git_dirty():
-        raise HTTPException(
-            400,
-            "Working tree has local changes. Commit/stash them, or update manually via scripts/install.",
-        )
 
     try:
         fetch_proc = _git("fetch", "--prune", "origin", timeout=90)
@@ -1091,10 +1095,14 @@ def apply_update(body: UpdateBody | None = None):
             err = (checkout.stderr or checkout.stdout or "checkout failed").strip()
             raise HTTPException(500, f"git checkout failed: {err[-400:]}")
 
-        pull = _git("pull", "--ff-only", "origin", _UPDATE_BRANCH, timeout=90)
-        if not _git_ok(pull):
-            err = (pull.stderr or pull.stdout or "pull failed").strip()
-            raise HTTPException(500, f"git pull failed: {err[-400:]}")
+        # Match install scripts: hard sync to origin/main. Keeps ignored files (.env, .venv).
+        reset = _git("reset", "--hard", remote_ref, timeout=60)
+        if not _git_ok(reset):
+            err = (reset.stderr or reset.stdout or "reset failed").strip()
+            raise HTTPException(500, f"git reset failed: {err[-400:]}")
+
+        # Drop untracked junk only — never -x (that would delete .env / .venv).
+        _git("clean", "-fd", timeout=30)
 
         _pip_install_requirements()
     except HTTPException:
