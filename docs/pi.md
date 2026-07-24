@@ -39,7 +39,23 @@ One-shot enable if you installed earlier without it:
 INSTALL_SERVICE=1 ~/ortur_laser/scripts/install.sh
 ```
 
-## Serial (USB) access
+## Permission / ownership fixes
+
+Always run install as your normal user (**not** `sudo ./scripts/install.sh`). Sudo is only prompted for the boot service.
+
+If you see permission errors (often after an earlier sudo install):
+
+```bash
+sudo chown -R "$USER:$USER" ~/ortur_laser
+~/ortur_laser/scripts/install.sh
+```
+
+If only the venv is broken:
+
+```bash
+sudo chown -R "$USER:$USER" ~/ortur_laser/server/.venv
+# or: rm -rf ~/ortur_laser/server/.venv && ~/ortur_laser/scripts/install.sh
+```
 
 The install script tries to add you to `dialout`. If Connect fails after a fresh install:
 
