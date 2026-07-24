@@ -340,9 +340,53 @@ class GrblSerial:
         self.status.identity = self._identity_cache
         self.status.connected = True
 
+    def _state_name(self) -> str:
+        return (self.status.state or "").strip().lower()
+
+    def _wait_ready_unlocked(self, timeout_ms: float = 20000) -> None:
+        """Block until GRBL will accept a new command (Idle), or Alarm/Hold.
+
+        Jog returns 'ok' when accepted, not when motion finishes — sending another
+        G-code mid-jog yields error:9. Call this before/after motion commands.
+        """
+        deadline = time.monotonic() + (timeout_ms / 1000.0)
+        while time.monotonic() < deadline:
+            if self._abort.is_set():
+                raise RuntimeError("Aborted")
+            self.refresh_status_unlocked()
+            st = self._state_name()
+            if st in ("idle", "alarm", "hold", "check", "door"):
+                return
+            time.sleep(0.04)
+        # Timed out still jogging/running — caller may hit error:9
+        self.refresh_status_unlocked()
+
+    def _command_when_ready(
+        self,
+        cmd: str,
+        *,
+        wait_ok: bool = True,
+        read_ms: int = 5000,
+        ready_ms: float = 20000,
+    ) -> str:
+        self._wait_ready_unlocked(ready_ms)
+        try:
+            return self._command_unlocked(cmd, wait_ok=wait_ok, read_ms=read_ms)
+        except RuntimeError as exc:
+            # One retry after a brief wait — covers race where status lagged.
+            if "error:9" not in str(exc).lower():
+                raise
+            self._wait_ready_unlocked(ready_ms)
+            if self._state_name() == "alarm":
+                raise RuntimeError("Machine in Alarm — click Unlock, then retry") from exc
+            return self._command_unlocked(cmd, wait_ok=wait_ok, read_ms=read_ms)
+
     def home(self) -> DeviceStatus:
         with self._lock:
             self._require()
+            self._wait_ready_unlocked(15000)
+            if self._state_name() == "alarm":
+                raise RuntimeError("Machine in Alarm — Unlock before Homing")
             self._command_unlocked("$H", wait_ok=True, read_ms=60000)
             self.refresh_status_unlocked()
             self.status.last_message = "Homed"
@@ -377,7 +421,7 @@ class GrblSerial:
     def laser_off(self) -> DeviceStatus:
         with self._lock:
             self._require()
-            self._command_unlocked("M5", wait_ok=True, read_ms=2000)
+            self._command_when_ready("M5", wait_ok=True, read_ms=2000)
             self.status.last_message = "Laser off (M5)"
             return self.snapshot()
 
@@ -385,12 +429,19 @@ class GrblSerial:
         axis = axis.upper()
         if axis not in {"X", "Y", "Z"}:
             raise ValueError("axis must be X, Y, or Z")
+        feed = max(1.0, float(feed))
+        # Time for travel + margin so we don't release the lock mid-jog.
+        travel_ms = (abs(float(distance_mm)) / feed) * 60_000.0 + 1500.0
         with self._lock:
             self._require()
+            self._wait_ready_unlocked(15000)
+            if self._state_name() == "alarm":
+                raise RuntimeError("Machine in Alarm — Unlock before jogging")
             # Laser off during jog
-            self._command_unlocked("M5", wait_ok=True, read_ms=1500)
+            self._command_when_ready("M5", wait_ok=True, read_ms=1500, ready_ms=15000)
             cmd = f"$J=G91 G21 {axis}{distance_mm:.3f} F{feed:.1f}"
             self._command_unlocked(cmd, wait_ok=True, read_ms=10000)
+            self._wait_ready_unlocked(max(5000.0, travel_ms))
             self.refresh_status_unlocked()
             self.status.last_message = f"Jog {axis}{distance_mm}"
             return self.snapshot()

@@ -715,7 +715,8 @@ function applyStatus(s) {
   updateRunUi();
   $("#identity").textContent = s.identity || "—";
   $("#message").textContent = s.last_message || "";
-  const alarm = (s.state || "").toLowerCase() === "alarm" || (s.job_error || "").includes("error:9");
+  // Only true Alarm lock — don't treat transient error:9 (busy/jog) as a sticky banner.
+  const alarm = (s.state || "").toLowerCase() === "alarm";
   $("#alarmBanner").classList.toggle("hidden", !alarm);
 
   if (s.job_running && s.job_lines_total > 0) {
@@ -895,9 +896,20 @@ async function postAct(path, body = {}) {
     const s = await api(path, { method: "POST", body: JSON.stringify(body) });
     applyStatus(s);
   } catch (e) {
-    showAlert(e.message);
+    const msg = e.message || String(e);
+    // error:9 = G-code locked (often still jogging). Soft notice, not a blocking modal.
+    if (/error:\s*9\b/i.test(msg)) {
+      const el = $("#message");
+      if (el) el.textContent = "Busy — wait for motion to finish, then retry";
+      try {
+        const s = await api("/device/status");
+        applyStatus(s);
+      } catch (_) { /* ignore */ }
+      return;
+    }
+    showAlert(msg);
   }
-};
+}
 
 document.querySelectorAll("[data-act]").forEach((btn) => {
   btn.onclick = () => postAct(`/device/${btn.dataset.act}`);
