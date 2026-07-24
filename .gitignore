@@ -31,3 +31,6 @@ venv/
 *.log
 .coverage
 htmlcov/
+
+# Local UI QA captures (keep docs/screenshot.png for README)
+server/.qa_screenshots/

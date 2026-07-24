@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import platform
 import re
 import threading
 import time
@@ -13,6 +14,26 @@ from serial.tools import list_ports
 STATUS_RE = re.compile(
     r"<(?P<state>\w+)\|MPos:(?P<mx>[-\d.]+),(?P<my>[-\d.]+),(?P<mz>[-\d.]+)"
 )
+
+# USB-serial chips / product names commonly used by Ortur & GRBL boards
+_LIKELY_HINTS = (
+    "ortur",
+    "grbl",
+    "ch340",
+    "ch341",
+    "cp210",
+    "ft232",
+    "ftdi",
+    "wch",
+    "arduino",
+    "usb serial",
+    "usb-serial",
+    "silicon labs",
+)
+_GRBL_PROBE_HINTS = ("grbl", "ortur", "[ver:", "[opt:", "[msg:")
+_SKIP_HINTS = ("bluetooth", "ble", "debug", "gps", "modem")
+# Pi / Linux built-in UARTs — usually not the laser USB cable
+_BUILTIN_UART = re.compile(r"(?i)(/dev/)?tty(AMA|S)\d+")
 
 
 @dataclass
@@ -43,24 +64,203 @@ class GrblSerial:
     _identity_cache: str = field(default="", init=False)
 
     @staticmethod
+    def default_port_hint() -> str:
+        """Platform-friendly placeholder when no preferred port is configured."""
+        system = platform.system().lower()
+        if system == "windows":
+            return "COM3"
+        if system == "darwin":
+            return "/dev/cu.usbserial-0001"
+        # Linux / Raspberry Pi — USB-serial adapters land here most often
+        return "/dev/ttyUSB0"
+
+    @staticmethod
+    def score_port(device: str, description: str = "", hwid: str = "") -> int:
+        """Higher = more likely an Ortur/GRBL USB engraver."""
+        blob = f"{device} {description} {hwid}".lower()
+        if any(s in blob for s in _SKIP_HINTS):
+            return -100
+        if _BUILTIN_UART.search(device or ""):
+            return -50
+
+        score = 0
+        if "ortur" in blob:
+            score += 100
+        for hint in _LIKELY_HINTS:
+            if hint != "ortur" and hint in blob:
+                score += 40
+                break
+
+        dev = (device or "").lower().replace("\\", "/")
+        if re.search(r"ttyusb\d+$", dev) or re.search(r"ttyacm\d+$", dev):
+            score += 30
+        elif re.search(r"/cu\.(usb|wch|slabs)", dev):
+            score += 30
+        elif re.match(r"com\d+$", dev):
+            score += 10
+        return score
+
+    @staticmethod
     def list_ports() -> list[dict]:
         ports = []
         for p in list_ports.comports():
+            device = p.device
+            description = p.description or ""
+            hwid = p.hwid or ""
             ports.append(
                 {
-                    "device": p.device,
-                    "description": p.description or "",
-                    "hwid": p.hwid or "",
+                    "device": device,
+                    "description": description,
+                    "hwid": hwid,
+                    "score": GrblSerial.score_port(device, description, hwid),
                 }
             )
+        ports.sort(key=lambda x: (-x["score"], x["device"]))
         return ports
+
+    @staticmethod
+    def _looks_like_grbl(text: str) -> bool:
+        lower = (text or "").lower()
+        return any(h in lower for h in _GRBL_PROBE_HINTS)
+
+    @staticmethod
+    def probe_port(port: str, baud: int = 115200, timeout: float = 0.4) -> dict:
+        """
+        Briefly open a port and check for a GRBL/Ortur identity banner or $I reply.
+        Does not keep the port open.
+        """
+        ser: serial.Serial | None = None
+        try:
+            ser = serial.Serial(port=port, baudrate=baud, timeout=timeout)
+            ser.dtr = True
+            ser.rts = True
+            time.sleep(0.6)
+            ser.reset_input_buffer()
+            ser.reset_output_buffer()
+
+            # Soft-reset often yields a "Grbl X.Xx ['$' for help]" banner
+            ser.write(b"\x18")
+            ser.flush()
+            time.sleep(0.35)
+            banner = ser.read(ser.in_waiting or 1).decode("utf-8", errors="replace")
+
+            ser.write(b"$I\n")
+            ser.flush()
+            deadline = time.monotonic() + 1.2
+            buf = banner
+            while time.monotonic() < deadline:
+                waiting = ser.in_waiting
+                if waiting:
+                    buf += ser.read(waiting).decode("utf-8", errors="replace")
+                    if GrblSerial._looks_like_grbl(buf) and (
+                        "ok" in buf.lower() or "[ver:" in buf.lower() or "grbl" in buf.lower()
+                    ):
+                        break
+                else:
+                    time.sleep(0.03)
+
+            ok = GrblSerial._looks_like_grbl(buf)
+            lines = [
+                ln.strip()
+                for ln in buf.splitlines()
+                if ln.strip() and ln.strip().lower() != "ok"
+            ]
+            identity = " | ".join(lines[:4]) if lines else buf.strip()[:120]
+            return {
+                "device": port,
+                "ok": ok,
+                "identity": identity if ok else "",
+                "detail": identity if not ok else "",
+            }
+        except Exception as exc:
+            return {"device": port, "ok": False, "identity": "", "detail": str(exc)}
+        finally:
+            if ser is not None:
+                try:
+                    ser.close()
+                except Exception:
+                    pass
+
+    def find_laser(
+        self,
+        preferred: str | None = None,
+        baud: int | None = None,
+    ) -> dict:
+        """
+        Search serial ports for a GRBL/Ortur engraver.
+        Tries `preferred` first (when set and not 'auto'), then scored candidates.
+        """
+        if self.connected and self.status.port:
+            return {
+                "found": True,
+                "device": self.status.port,
+                "identity": self.status.identity,
+                "message": f"Already connected on {self.status.port}",
+                "candidates": [],
+            }
+
+        baud = baud or self.baud
+        ports = self.list_ports()
+        preferred_norm = (preferred or "").strip()
+        if preferred_norm.lower() in ("", "auto"):
+            preferred_norm = ""
+
+        ordered: list[str] = []
+        if preferred_norm:
+            ordered.append(preferred_norm)
+        for p in ports:
+            if p["device"] not in ordered:
+                ordered.append(p["device"])
+
+        # Prefer USB-looking ports when nothing is scored highly
+        if not preferred_norm:
+            ordered.sort(
+                key=lambda d: (
+                    -next((x["score"] for x in ports if x["device"] == d), self.score_port(d)),
+                    d,
+                )
+            )
+
+        probed: list[dict] = []
+        for device in ordered:
+            # Skip deeply unlikely ports unless they were explicitly preferred
+            score = next((x["score"] for x in ports if x["device"] == device), self.score_port(device))
+            if device != preferred_norm and score < 0:
+                continue
+            result = self.probe_port(device, baud=baud)
+            probed.append(result)
+            if result["ok"]:
+                return {
+                    "found": True,
+                    "device": device,
+                    "identity": result["identity"],
+                    "message": f"Found laser on {device}",
+                    "candidates": probed,
+                }
+
+        return {
+            "found": False,
+            "device": None,
+            "identity": "",
+            "message": "No GRBL/Ortur laser found on available serial ports",
+            "candidates": probed,
+        }
 
     @property
     def connected(self) -> bool:
         return self._ser is not None and self._ser.is_open
 
-    def connect(self, port: str) -> DeviceStatus:
+    def connect(self, port: str | None = None) -> DeviceStatus:
         with self._lock:
+            raw = (port or "").strip()
+            if not raw or raw.lower() == "auto":
+                found = self.find_laser(preferred=None, baud=self.baud)
+                if not found["found"] or not found["device"]:
+                    raise RuntimeError(found["message"])
+                port = found["device"]
+            else:
+                port = raw
+
             if self.connected:
                 self.disconnect()
             self._abort.clear()
@@ -80,7 +280,7 @@ class GrblSerial:
             self._identity_cache = identity
             self.status.identity = identity
             self.refresh_status_unlocked()
-            self.status.last_message = "Connected"
+            self.status.last_message = f"Connected ({port})"
             return self.snapshot()
 
     def disconnect(self) -> DeviceStatus:

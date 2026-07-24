@@ -752,23 +752,59 @@ async function refreshStatus() {
   }
 }
 
-async function loadPorts() {
+function selectPortValue(sel, value) {
+  if (!value) return false;
+  const match = [...sel.options].find((o) => o.value === value);
+  if (match) {
+    sel.value = value;
+    return true;
+  }
+  return false;
+}
+
+async function loadPorts(preferDevice) {
   const data = await api("/device/ports");
   const sel = $("#port");
+  const prev = preferDevice || sel.value;
   sel.innerHTML = "";
+
+  const autoOpt = document.createElement("option");
+  autoOpt.value = "auto";
+  autoOpt.textContent = "Auto — find laser";
+  sel.appendChild(autoOpt);
+
   for (const p of data.ports) {
     const opt = document.createElement("option");
     opt.value = p.device;
-    opt.textContent = `${p.device} — ${p.description}`;
-    if (p.device === (window.DEFAULT_PORT || data.default)) opt.selected = true;
+    const mark = (p.score || 0) >= 30 ? "★ " : "";
+    opt.textContent = `${mark}${p.device} — ${p.description || "serial"}`;
     sel.appendChild(opt);
   }
-  if (!data.ports.length) {
-    const opt = document.createElement("option");
-    opt.value = window.DEFAULT_PORT || "COM3";
-    opt.textContent = opt.value;
-    sel.appendChild(opt);
+
+  const configured = (window.DEFAULT_PORT || data.default || "auto").trim();
+  const hint = data.hint || configured;
+
+  if (preferDevice && selectPortValue(sel, preferDevice)) {
+    /* keep found port */
+  } else if (prev && prev !== "auto" && selectPortValue(sel, prev)) {
+    /* keep prior selection */
+  } else if (configured.toLowerCase() !== "auto" && selectPortValue(sel, configured)) {
+    /* configured SERIAL_PORT */
+  } else if (data.ports.length) {
+    // Prefer highest-scored USB candidate; fall back to Auto
+    const best = data.ports.find((p) => (p.score || 0) >= 30) || data.ports[0];
+    if (best && (best.score || 0) >= 10) selectPortValue(sel, best.device);
+    else sel.value = "auto";
+  } else {
+    sel.value = "auto";
+    if (hint && hint.toLowerCase() !== "auto") {
+      const opt = document.createElement("option");
+      opt.value = hint;
+      opt.textContent = hint;
+      sel.appendChild(opt);
+    }
   }
+  return data;
 }
 
 async function loadFonts() {
@@ -799,12 +835,49 @@ function stopPoll() {
   pollTimer = null;
 }
 
+$("#btnFind").onclick = async () => {
+  const btn = $("#btnFind");
+  const prev = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "…";
+  try {
+    $("#message").textContent = "Scanning serial ports…";
+    const preferred = $("#port").value;
+    const result = await api("/device/find", {
+      method: "POST",
+      body: JSON.stringify({
+        port: preferred === "auto" ? "auto" : preferred,
+      }),
+    });
+    await loadPorts(result.device || undefined);
+    if (result.found && result.device) {
+      selectPortValue($("#port"), result.device);
+      $("#message").textContent = result.message + (result.identity ? ` · ${result.identity}` : "");
+    } else {
+      $("#message").textContent = result.message || "No laser found";
+      showAlert(
+        (result.message || "No GRBL/Ortur laser found.") +
+          " Close LaserGRBL/LightBurn, check the USB cable, and on Raspberry Pi ensure your user is in the dialout group.",
+        "Find laser"
+      );
+    }
+  } catch (e) {
+    showAlert(e.message, "Find laser failed");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = prev;
+  }
+};
+
 $("#btnConnect").onclick = async () => {
   try {
+    const port = $("#port").value || "auto";
+    $("#message").textContent = port === "auto" ? "Finding laser…" : `Connecting ${port}…`;
     const s = await api("/device/connect", {
       method: "POST",
-      body: JSON.stringify({ port: $("#port").value }),
+      body: JSON.stringify({ port }),
     });
+    if (s.port) await loadPorts(s.port);
     applyStatus(s);
     startPoll();
   } catch (e) {

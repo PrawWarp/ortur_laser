@@ -61,6 +61,7 @@ h1 {
   min-width: 0;
 }
 .top-conn select { flex: 1; min-width: 8rem; max-width: 18rem; }
+.top-conn #btnFind { flex-shrink: 0; }
 
 .badge {
   padding: 0.28rem 0.7rem;

@@ -1,0 +1,20 @@
+[Unit]
+Description=Ortur Engraver web UI
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+Group=__USER__
+WorkingDirectory=__ROOT__/server
+Environment=PATH=__ROOT__/server/.venv/bin:/usr/local/bin:/usr/bin
+ExecStart=__ROOT__/server/.venv/bin/python run.py
+Restart=on-failure
+RestartSec=5
+
+# Serial devices (USB) — user should be in dialout
+SupplementaryGroups=dialout
+
+[Install]
+WantedBy=multi-user.target

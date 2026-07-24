@@ -14,7 +14,8 @@
     <h1>Ortur Engraver</h1>
     <span class="sub">{{ bed_w }}×{{ bed_h }} mm</span>
     <div class="top-conn">
-      <select id="port"></select>
+      <select id="port" title="Serial port (Windows COM*, Linux /dev/ttyUSB*)"></select>
+      <button id="btnFind" type="button" class="ghost" title="Scan ports for a GRBL/Ortur laser">Find</button>
       <button id="btnConnect" type="button">Connect</button>
       <button id="btnDisconnect" type="button" class="ghost">Disc.</button>
     </div>

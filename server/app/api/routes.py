@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import platform
 import re
 import socket
 import subprocess
@@ -132,7 +133,25 @@ class GridJobBody(BaseModel):
 
 @router.get("/device/ports")
 def list_ports():
-    return {"ports": GrblSerial.list_ports(), "default": settings.serial_port}
+    ports = GrblSerial.list_ports()
+    preferred = (settings.serial_port or "auto").strip()
+    return {
+        "ports": ports,
+        "default": preferred,
+        "hint": settings.serial_port_display,
+        "platform": platform.system(),
+    }
+
+
+@router.post("/device/find")
+def find_laser(body: ConnectBody = ConnectBody()):
+    """Probe serial ports for a GRBL/Ortur engraver (Windows COM* and Linux /dev/ttyUSB*)."""
+    preferred = body.port if body.port is not None else settings.serial_port
+    try:
+        result = device.find_laser(preferred=preferred, baud=settings.serial_baud)
+    except Exception as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return result
 
 
 @router.get("/device/status")
@@ -149,7 +168,7 @@ def device_status():
 
 @router.post("/device/connect")
 def connect(body: ConnectBody):
-    port = body.port or settings.serial_port
+    port = body.port if body.port is not None else settings.serial_port
     try:
         device.connect(port)
     except Exception as exc:

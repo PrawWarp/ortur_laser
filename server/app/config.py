@@ -1,14 +1,25 @@
 from pathlib import Path
+import platform
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _ENV = Path(__file__).resolve().parent.parent / ".env"
 
 
+def _default_serial_hint() -> str:
+    system = platform.system().lower()
+    if system == "windows":
+        return "COM3"
+    if system == "darwin":
+        return "/dev/cu.usbserial-0001"
+    return "/dev/ttyUSB0"
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=str(_ENV), env_file_encoding="utf-8", extra="ignore")
 
-    serial_port: str = "COM3"
+    # "auto" = probe serial ports for a GRBL/Ortur laser (Windows + Linux/Pi)
+    serial_port: str = "auto"
     serial_baud: int = 115200
     bed_width_mm: float = 400.0
     bed_height_mm: float = 430.0
@@ -19,6 +30,13 @@ class Settings(BaseSettings):
     @property
     def bind_host(self) -> str:
         return "0.0.0.0" if self.lan_access else "127.0.0.1"
+
+    @property
+    def serial_port_display(self) -> str:
+        raw = (self.serial_port or "auto").strip()
+        if raw.lower() == "auto":
+            return _default_serial_hint()
+        return raw
 
 
 settings = Settings()
